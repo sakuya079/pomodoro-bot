@@ -1,3 +1,4 @@
+#####前提条件のため操作禁止#####
 import asyncio
 import os
 from dotenv import load_dotenv
@@ -15,9 +16,10 @@ intents.message_content = True
 
 bot = commands.Bot(command_prefix=PREFIX, intents=intents)
 
-current_task = None
+current_tasks = {}
+#####ここまで#####
 
-
+#####ポモドーロタイマー処理#####
 async def play_sound(ctx, filename):
     if not ctx.author.voice:
         await ctx.send("VCに入室してください")
@@ -64,11 +66,17 @@ async def on_ready():
     print(f"Logged in as {bot.user}")
 
 
+#####動作中処理#####
 @bot.command()
 async def start(ctx, work_min: int, break_min: int, rounds: int):
-    global current_task
+    if not ctx.author.voice or not ctx.author.voice.channel:
+        await ctx.send("VCに入室後、開始してください")
+        return
 
-    if current_task and not current_task.done():
+    channel_id = ctx.author.voice.channel.id
+
+    task = current_tasks.get(channel_id)
+    if task and not task.done():
         await ctx.send("タイマー起動中。停止： `pmt!stop`")
         return
 
@@ -104,7 +112,8 @@ async def start(ctx, work_min: int, break_min: int, rounds: int):
                 if ctx.voice_client:
                     await ctx.voice_client.disconnect()
                     await ctx.send("全セット終了 VC退出")
-
+ 
+                current_tasks.pop(channel_id, None)
                 break
 
 
@@ -122,20 +131,34 @@ async def start(ctx, work_min: int, break_min: int, rounds: int):
 
             await play_sound(ctx, "start.mp3")
 
-    current_task = asyncio.create_task(timer())
+    current_tasks[channel_id] = asyncio.create_task(timer())
 
 
+#####ストップ処理#####
 @bot.command()
 async def stop(ctx):
-    global current_task
+    if not ctx.author.voice or not ctx.author.voice.channel:
+        await ctx.send("停止するVCに入室してください")
+        return
 
-    if current_task and not current_task.done():
-        current_task.cancel()
+    channel_id = ctx.author.voice.channel.id
+    task = current_tasks.get(channel_id)
+
+    if task and not task.done():
+        task.cancel()
+        current_tasks.pop(channel_id, None)
+
         await ctx.send("タイマー停止")
+
+        if ctx.voice_client:
+            await ctx.voice_client.disconnect()
+            await ctx.send("VC退出")
+        
     else:
-        await ctx.send("起動中タイマー なし")
+        await ctx.send("VCで起動中タイマーはありません")
 
 
+#####VC入室
 @bot.command()
 async def leave(ctx):
     if ctx.voice_client:
@@ -145,6 +168,7 @@ async def leave(ctx):
         await ctx.send("VCに入室していません")
 
 
+#####エラー処理#####
 @start.error
 async def start_error(ctx, error):
     if isinstance(error, commands.MissingRequiredArgument):
@@ -152,7 +176,7 @@ async def start_error(ctx, error):
     elif isinstance(error, commands.BadArgument):
         await ctx.send("条件を指定してください 例：`pmt!start 25 5 4`")
     else:
-        await ctx.send(f"エラーが出た: {type(error).__name__}")
+        await ctx.send(f"エラー発生: {type(error).__name__}")
 
 
 bot.run(TOKEN)
